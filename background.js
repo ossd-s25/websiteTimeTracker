@@ -1,59 +1,69 @@
-let startTime;
-let currentUrl;
+let startTime = null;
+let currentUrl = null;
 let timeData = {};
 
-
-browser.runtime.onStartup.addListener(() => {
-  browser.storage.local.get(['timeData']).then((result) => {
+// Load timeData from storage on start
+chrome.runtime.onStartup.addListener(() => {
+  chrome.storage.local.get(['timeData'], (result) => {
     timeData = result.timeData || {};
   });
 });
 
-
-browser.tabs.onActivated.addListener((activeInfo) => {
-  browser.tabs.get(activeInfo.tabId).then((tab) => {
-    handleTabChange(tab.url);
+// Track when tab is activated
+chrome.tabs.onActivated.addListener((activeInfo) => {
+  chrome.tabs.get(activeInfo.tabId, (tab) => {
+    if (tab && tab.url) handleTabChange(tab.url);
   });
 });
 
-
-browser.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+// Track when tab URL changes
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (changeInfo.url) {
     handleTabChange(changeInfo.url);
   }
 });
 
+// Track when tab is closed
+chrome.tabs.onRemoved.addListener(() => {
+  handleTabChange(null);
+});
+
+// Handle tab switch or close
 function handleTabChange(newUrl) {
- 
   if (currentUrl && startTime) {
-    const domain = new URL(currentUrl).hostname;
-    const timeSpent = Date.now() - startTime;
-    timeData[domain] = (timeData[domain] || 0) + timeSpent;
-    browser.storage.local.set({ timeData });
+    try {
+      const domain = new URL(currentUrl).hostname;
+      const timeSpent = Date.now() - startTime;
+      timeData[domain] = (timeData[domain] || 0) + timeSpent;
+      chrome.storage.local.set({ timeData });
+    } catch (e) {
+      console.error('Error tracking time for previous tab:', e);
+    }
   }
 
-  
-  currentUrl = newUrl;
-  startTime = Date.now();
+  if (newUrl) {
+    currentUrl = newUrl;
+    startTime = Date.now();
+  } else {
+    currentUrl = null;
+    startTime = null;
+  }
 }
 
-
-browser.runtime.onMessage.addListener((message) => {
+// Respond to popup request
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === 'getCurrentTimes') {
-    
     const currentTimes = { ...timeData };
-    
-    
     if (currentUrl && startTime) {
       try {
         const domain = new URL(currentUrl).hostname;
         const currentTime = Date.now() - startTime;
         currentTimes[domain] = (currentTimes[domain] || 0) + currentTime;
       } catch (e) {
-        console.error('Error processing URL:', e);
+        console.error('Error getting current tab domain:', e);
       }
     }
-    
-    return Promise.resolve(currentTimes);
+    sendResponse(currentTimes);
+    return true; // keep message channel open
   }
 });
